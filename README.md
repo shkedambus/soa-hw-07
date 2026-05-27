@@ -45,7 +45,7 @@ Client -> booking-service (FastAPI REST :8080) -> flight-service (gRPC :50051)
 
 ## Запуск
 
-Все сервисы приложения и инфраструктура мониторинга запускаются одной командой:
+Весь стек запускается одной командой:
 
 ```bash
 cd hw-07
@@ -85,8 +85,8 @@ make verify-alert
 | Проверка | Что доказывает |
 |---|---|
 | Unit tests | Расчет стоимости и доменные ограничения рейса/мест |
-| Integration test | REST-запрос вызывает gRPC-сервис; записи появились в `bookings` и `seat_reservations` |
-| E2E test | Создание рейса -> бронирование -> уменьшение мест -> отмена -> восстановление мест |
+| Integration tests | REST-запрос вызывает gRPC-сервис; успешная бронь сохраняется в `bookings` и `seat_reservations`; превышение оставшихся мест возвращает `409` без лишней брони; неизвестный рейс возвращает `404` без записи в `bookings` |
+| E2E tests | Создание рейса -> бронирование -> уменьшение мест -> отмена -> восстановление мест; повторная отмена возвращает `409` и не освобождает места второй раз |
 | Load test | `Locust`, 10 пользователей, 30 секунд поиска рейсов, с fail thresholds |
 | SLI verification | Числовые условия читаются из Prometheus API, а не hardcode-результата |
 | Alert verification | Поток запросов отсутствующего рейса приводит `BookingHighErrorRate` в `firing` |
@@ -96,7 +96,7 @@ Integration и E2E используют уникальные рейсы и в `f
 
 ## Метрики и dashboard
 
-`booking-service` автоматически инструментирован FastAPI middleware:
+`booking-service` инструментирован через FastAPI middleware:
 
 | Metric | Labels |
 |---|---|
@@ -125,8 +125,8 @@ JSON dashboard-ов хранится в `infra/grafana/dashboards`.
 
 ## Load test и SLI/SLO
 
-Нагрузка обращается к поиску рейсов: это читающий пользовательский поток,
-проходящий из REST API через gRPC в PostgreSQL и не исчерпывающий места.
+Нагрузка идет на поиск рейсов: читающий путь через REST, gRPC и PostgreSQL,
+места не расходует.
 `load/locustfile.py` завершает прогон ошибкой при `error rate >= 1%` или
 `p95 >= 500 ms`. Порог p95 достаточен для локального запроса к двум контейнерам
 с одной простой индексированной выборкой; превышение означает деградацию,
@@ -158,12 +158,12 @@ Search latency является end-to-end SLI: REST response возвращае
 `make verify-alert` выполняет запросы отсутствующего рейса, дожидается
 срабатывания `BookingHighErrorRate` через Prometheus API и его появления через
 Alertmanager API, затем сохраняет подтверждение в `artifacts/alert_verification.json`.
-Сработавший alert также виден в UI Prometheus и Alertmanager.
+Сработавший alert виден в UI Prometheus и Alertmanager.
 
-## GitLab CI
+## GitHub Actions CI
 
-Pipeline хранится в корневом `.gitlab-ci.yml` и запускается на push/merge request
-стандартным поведением GitLab. Этапы:
+Pipeline хранится в `.github/workflows/ci.yml` и запускается при `push` и
+`pull_request` средствами GitHub Actions. Этапы:
 
 ```text
 build -> unit_tests -> integration_tests -> e2e_tests -> load_metrics_and_alerts
@@ -172,12 +172,11 @@ build -> unit_tests -> integration_tests -> e2e_tests -> load_metrics_and_alerts
 Финальный job в одном окружении запускает E2E, нагрузку, получает реальные
 метрики Prometheus, проверяет SLI и подтверждает firing alert. При ошибке любого
 шага job завершается ненулевым кодом. Логи compose и отчеты нагрузки/SLI/alerts
-публикуются как CI artifacts с `when: always`.
+публикуются как artifacts с `if: always()`.
 
 ## Демонстрация на защите
 
 ```bash
-cd hw-07
 make up
 make integration
 make e2e
@@ -185,8 +184,7 @@ make load
 make verify-alert
 ```
 
-Затем открыть Grafana, Prometheus targets/alerts и Alertmanager. Проверить записи
-в хранилищах можно командами:
+Затем открыть Grafana, Prometheus targets/alerts и Alertmanager. Записи в базах:
 
 ```bash
 docker compose exec booking-db psql -U postgres -d booking -c "SELECT * FROM bookings;"
