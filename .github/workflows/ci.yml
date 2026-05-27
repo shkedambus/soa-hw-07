@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: hw-07
+        working-directory: .
     steps:
       - uses: actions/checkout@v4
       - run: docker compose build
@@ -22,7 +22,7 @@ jobs:
     needs: build
     defaults:
       run:
-        working-directory: hw-07
+        working-directory: .
     steps:
       - uses: actions/checkout@v4
       - run: docker compose build booking-service flight-service
@@ -34,7 +34,7 @@ jobs:
     needs: unit_tests
     defaults:
       run:
-        working-directory: hw-07
+        working-directory: .
     steps:
       - uses: actions/checkout@v4
       - run: mkdir -p artifacts
@@ -49,14 +49,14 @@ jobs:
         if: always()
         with:
           name: integration-artifacts
-          path: hw-07/artifacts/
+          path: artifacts/
 
   e2e_tests:
     runs-on: ubuntu-latest
     needs: integration_tests
     defaults:
       run:
-        working-directory: hw-07
+        working-directory: .
     steps:
       - uses: actions/checkout@v4
       - run: mkdir -p artifacts
@@ -71,14 +71,14 @@ jobs:
         if: always()
         with:
           name: e2e-artifacts
-          path: hw-07/artifacts/
+          path: artifacts/
 
   load_metrics_and_alerts:
     runs-on: ubuntu-latest
     needs: e2e_tests
     defaults:
       run:
-        working-directory: hw-07
+        working-directory: .
     steps:
       - uses: actions/checkout@v4
       - run: mkdir -p artifacts
@@ -96,4 +96,4 @@ jobs:
         if: always()
         with:
           name: load-artifacts
-          path: hw-07/artifacts/
+          path: artifacts/
