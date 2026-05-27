@@ -32,3 +32,35 @@ def test_user_books_and_cancels_seats_end_to_end() -> None:
         assert row == (8, "RELEASED")
     finally:
         cleanup(flight["id"], booking["id"] if booking else None)
+
+
+def test_user_cannot_cancel_booking_twice() -> None:
+    flight = create_flight(total_seats=4)
+    booking = None
+    try:
+        booking = create_booking(flight["id"], seats=2)
+        first_cancel = requests.post(
+            f"{API_URL}/bookings/{booking['id']}/cancel", timeout=5
+        )
+        assert first_cancel.status_code == 200
+        assert first_cancel.json()["status"] == "CANCELLED"
+
+        repeated_cancel = requests.post(
+            f"{API_URL}/bookings/{booking['id']}/cancel", timeout=5
+        )
+        assert repeated_cancel.status_code == 409
+        assert repeated_cancel.json()["detail"] == "booking is already cancelled"
+
+        with psycopg.connect(FLIGHT_DATABASE_URL) as connection:
+            row = connection.execute(
+                """
+                SELECT f.available_seats, r.status
+                FROM flights f
+                JOIN seat_reservations r ON r.flight_id = f.id
+                WHERE r.booking_id = %s
+                """,
+                (booking["id"],),
+            ).fetchone()
+        assert row == (4, "RELEASED")
+    finally:
+        cleanup(flight["id"], booking["id"] if booking else None)

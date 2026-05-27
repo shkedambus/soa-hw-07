@@ -31,8 +31,8 @@ def create_flight(total_seats: int = 12) -> dict:
     return response.json()
 
 
-def create_booking(flight_id: str, seats: int = 2) -> dict:
-    response = requests.post(
+def post_booking(flight_id: str, seats: int = 2) -> requests.Response:
+    return requests.post(
         f"{API_URL}/bookings",
         json={
             "user_id": f"test-{uuid.uuid4().hex[:8]}",
@@ -43,6 +43,10 @@ def create_booking(flight_id: str, seats: int = 2) -> dict:
         },
         timeout=5,
     )
+
+
+def create_booking(flight_id: str, seats: int = 2) -> dict:
+    response = post_booking(flight_id, seats)
     response.raise_for_status()
     return response.json()
 
