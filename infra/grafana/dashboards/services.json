@@ -1,0 +1,67 @@
+{
+  "title": "Flight Booking Services",
+  "uid": "flight-booking-services",
+  "schemaVersion": 39,
+  "refresh": "5s",
+  "time": {"from": "now-15m", "to": "now"},
+  "panels": [
+    {"type": "row", "title": "Booking Service (REST)", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "id": 1},
+    {
+      "type": "timeseries", "title": "Booking throughput (RPS)", "id": 2,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(http_requests_total{service=\"booking-service\"}[1m]))", "legendFormat": "requests/s"}],
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 1}
+    },
+    {
+      "type": "timeseries", "title": "Booking p50/p95/p99 latency", "id": 3,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{service=\"booking-service\"}[1m])) by (le))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service=\"booking-service\"}[1m])) by (le))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{service=\"booking-service\"}[1m])) by (le))", "legendFormat": "p99"}
+      ],
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 1}
+    },
+    {
+      "type": "timeseries", "title": "Booking errors", "id": 4,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(http_request_errors_total{service=\"booking-service\"}[1m])) by (error_type)", "legendFormat": "{{error_type}}"}],
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 1}
+    },
+    {
+      "type": "stat", "title": "Booking availability", "id": 5,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "1 - (sum(rate(http_request_errors_total{service=\"booking-service\"}[1m])) / sum(rate(http_requests_total{service=\"booking-service\"}[1m])))", "legendFormat": "success ratio"}],
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 1}
+    },
+    {"type": "row", "title": "Flight Service (gRPC)", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9}, "id": 6},
+    {
+      "type": "timeseries", "title": "Flight throughput (RPS)", "id": 7,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(grpc_requests_total{service=\"flight-service\"}[1m]))", "legendFormat": "requests/s"}],
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 10}
+    },
+    {
+      "type": "timeseries", "title": "Flight p50/p95/p99 latency", "id": 8,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(grpc_request_duration_seconds_bucket{service=\"flight-service\"}[1m])) by (le))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, sum(rate(grpc_request_duration_seconds_bucket{service=\"flight-service\"}[1m])) by (le))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, sum(rate(grpc_request_duration_seconds_bucket{service=\"flight-service\"}[1m])) by (le))", "legendFormat": "p99"}
+      ],
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 10}
+    },
+    {
+      "type": "timeseries", "title": "Flight errors", "id": 9,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(grpc_request_errors_total{service=\"flight-service\"}[1m])) by (error_type)", "legendFormat": "{{error_type}}"}],
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 10}
+    },
+    {
+      "type": "stat", "title": "Flight availability", "id": 10,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "1 - (sum(rate(grpc_request_errors_total{service=\"flight-service\"}[1m])) / sum(rate(grpc_requests_total{service=\"flight-service\"}[1m])))", "legendFormat": "success ratio"}],
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 10}
+    }
+  ]
+}

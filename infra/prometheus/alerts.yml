@@ -1,0 +1,32 @@
+groups:
+  - name: flight-booking
+    rules:
+      - alert: BookingServiceDown
+        expr: up{job="booking-service"} == 0
+        for: 10s
+        labels:
+          severity: critical
+        annotations:
+          summary: Booking Service is unavailable
+
+      - alert: BookingHighErrorRate
+        expr: |
+          sum(rate(http_request_errors_total{service="booking-service",endpoint="/flights/{flight_id}"}[30s]))
+          /
+          sum(rate(http_requests_total{service="booking-service",endpoint="/flights/{flight_id}"}[30s])) > 0.05
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: Booking API error rate exceeds 5 percent
+
+      - alert: BookingHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket{service="booking-service"}[30s])) by (le)
+          ) > 1
+        for: 10s
+        labels:
+          severity: warning
+        annotations:
+          summary: Booking API p95 latency exceeds one second

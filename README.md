@@ -1,1 +1,200 @@
-# soa-hw-07
+# HW-07: Flight Booking Observability and CI/CD
+
+## Выбор системы и упрощение
+
+Основа работы - система Flight Booking из `hw-03`: бронирование естественно проходит
+через два сервиса и две принадлежащие им базы данных. Это совпадает с примером E2E
+из задания и не требует искусственного выделения второго сервиса.
+
+Из исходной системы исключен Redis Sentinel. Кеш не участвует в инварианте
+бронирования, но потребовал бы еще один exporter, дополнительные панели и более
+тяжелый запуск CI. Для HW-07 оставлены компоненты, необходимые для проверяемого
+пользовательского сценария и наблюдаемости:
+
+```text
+Client -> booking-service (FastAPI REST :8080) -> flight-service (gRPC :50051)
+              |                                      |
+          booking-db                             flight-db
+              \                                      /
+                Prometheus <- /metrics + postgres-exporters
+                    |              |
+                 Grafana       Alertmanager
+```
+
+Оба сервиса написаны на Python. Межсервисный контракт описан в
+`proto/flight.proto` и генерируется в Docker build через `grpc_tools.protoc`.
+Каждая база принадлежит одному сервису; миграции выполняет Flyway при старте.
+
+## Доменный сценарий
+
+Публичным API является `booking-service`:
+
+| Endpoint | Назначение |
+|---|---|
+| `POST /flights` | Создать рейс через gRPC-вызов Flight Service |
+| `GET /flights?origin=SVO&destination=LED` | Найти доступные рейсы |
+| `GET /flights/{id}` | Получить текущие свободные места |
+| `POST /bookings` | Получить рейс, атомарно зарезервировать места и сохранить бронь |
+| `POST /bookings/{id}/cancel` | Освободить места и отменить бронь |
+| `GET /health`, `GET /metrics` | Health и Prometheus metrics |
+
+`flight-service` владеет таблицами `flights` и `seat_reservations`.
+`ReserveSeats` блокирует строку рейса через `SELECT FOR UPDATE`, уменьшает
+`available_seats` и создает резервацию в одной транзакции. `booking-service`
+сохраняет рассчитанный snapshot стоимости в своей таблице `bookings`.
+
+## Запуск
+
+Все сервисы приложения и инфраструктура мониторинга запускаются одной командой:
+
+```bash
+cd hw-07
+docker compose up --build
+```
+
+Для запуска в фоне с ожиданием health checks:
+
+```bash
+make up
+```
+
+После старта доступны:
+
+| Компонент | URL |
+|---|---|
+| Booking API / Swagger | http://localhost:8080/docs |
+| Booking metrics | http://localhost:8080/metrics |
+| Flight metrics | http://localhost:8081/metrics |
+| Prometheus | http://localhost:9090 |
+| Alertmanager | http://localhost:9093 |
+| Grafana (`admin` / `admin`) | http://localhost:3000 |
+
+## Тестирование
+
+Команды запускаются из `hw-07`:
+
+```bash
+make up
+make unit
+make integration
+make e2e
+make load
+make verify-alert
+```
+
+| Проверка | Что доказывает |
+|---|---|
+| Unit tests | Расчет стоимости и доменные ограничения рейса/мест |
+| Integration test | REST-запрос вызывает gRPC-сервис; записи появились в `bookings` и `seat_reservations` |
+| E2E test | Создание рейса -> бронирование -> уменьшение мест -> отмена -> восстановление мест |
+| Load test | `Locust`, 10 пользователей, 30 секунд поиска рейсов, с fail thresholds |
+| SLI verification | Числовые условия читаются из Prometheus API, а не hardcode-результата |
+| Alert verification | Поток запросов отсутствующего рейса приводит `BookingHighErrorRate` в `firing` |
+
+Integration и E2E используют уникальные рейсы и в `finally` удаляют созданные
+брони, резервации и рейсы, поэтому не зависят от порядка запусков.
+
+## Метрики и dashboard
+
+`booking-service` автоматически инструментирован FastAPI middleware:
+
+| Metric | Labels |
+|---|---|
+| `http_requests_total` | `service`, `method`, `endpoint`, `status` |
+| `http_request_errors_total` | `service`, `method`, `endpoint`, `error_type` |
+| `http_request_duration_seconds` | `service`, `method`, `endpoint` |
+
+`flight-service` инструментирован gRPC server interceptor и экспортирует аналогичные
+метрики через свой HTTP `/metrics`:
+
+| Metric | Labels |
+|---|---|
+| `grpc_requests_total` | `service`, `method`, `endpoint`, `status` |
+| `grpc_request_errors_total` | `service`, `method`, `endpoint`, `error_type` |
+| `grpc_request_duration_seconds` | `service`, `method`, `endpoint` |
+
+Prometheus также собирает метрики двух PostgreSQL через `postgres-exporter`.
+Grafana provisioning загружает автоматически:
+
+| Dashboard | Панели |
+|---|---|
+| `Flight Booking Services` | Отдельные секции Booking и Flight: throughput, p50/p95/p99 latency, errors, availability - по 4 панели на сервис |
+| `Flight Booking Infrastructure` | PostgreSQL availability, connections и committed transactions rate |
+
+JSON dashboard-ов хранится в `infra/grafana/dashboards`.
+
+## Load test и SLI/SLO
+
+Нагрузка обращается к поиску рейсов: это читающий пользовательский поток,
+проходящий из REST API через gRPC в PostgreSQL и не исчерпывающий места.
+`load/locustfile.py` завершает прогон ошибкой при `error rate >= 1%` или
+`p95 >= 500 ms`. Порог p95 достаточен для локального запроса к двум контейнерам
+с одной простой индексированной выборкой; превышение означает деградацию,
+видимую пользователю.
+
+System-level SLI после нагрузки проверяет `scripts/verify_sli.py`:
+
+| SLI | PromQL | SLO | Порог отказа CI |
+|---|---|---|---|
+| API availability | `sum(rate(http_requests_total{service="booking-service",endpoint="/flights",status=~"2.."}[1m])) / sum(rate(http_requests_total{service="booking-service",endpoint="/flights"}[1m]))` | `> 99.5%` | `<= 99%` |
+| End-to-end search latency p95 | `histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="booking-service",endpoint="/flights"}[1m])) by (le))` | `< 300 ms` | `>= 500 ms` |
+
+Search latency является end-to-end SLI: REST response возвращается только после
+завершения gRPC-вызова Flight Service и чтения его PostgreSQL.
+Отчет проверки сохраняется в `artifacts/sli_report.json`, а результат Locust -
+в `artifacts/load_thresholds.json` и CSV-файлах.
+
+## Alerts as Code
+
+Правила находятся в `infra/prometheus/alerts.yml`, Alertmanager автоматически
+поднимается в compose:
+
+| Alert | Условие |
+|---|---|
+| `BookingServiceDown` | target API недоступен 10 секунд |
+| `BookingHighErrorRate` | error rate `GET /flights/{flight_id}` выше 5% |
+| `BookingHighLatency` | p95 API выше 1 секунды 10 секунд |
+
+`make verify-alert` выполняет запросы отсутствующего рейса, дожидается
+срабатывания `BookingHighErrorRate` через Prometheus API и его появления через
+Alertmanager API, затем сохраняет подтверждение в `artifacts/alert_verification.json`.
+Сработавший alert также виден в UI Prometheus и Alertmanager.
+
+## GitLab CI
+
+Pipeline хранится в корневом `.gitlab-ci.yml` и запускается на push/merge request
+стандартным поведением GitLab. Этапы:
+
+```text
+build -> unit_tests -> integration_tests -> e2e_tests -> load_metrics_and_alerts
+```
+
+Финальный job в одном окружении запускает E2E, нагрузку, получает реальные
+метрики Prometheus, проверяет SLI и подтверждает firing alert. При ошибке любого
+шага job завершается ненулевым кодом. Логи compose и отчеты нагрузки/SLI/alerts
+публикуются как CI artifacts с `when: always`.
+
+## Демонстрация на защите
+
+```bash
+cd hw-07
+make up
+make integration
+make e2e
+make load
+make verify-alert
+```
+
+Затем открыть Grafana, Prometheus targets/alerts и Alertmanager. Проверить записи
+в хранилищах можно командами:
+
+```bash
+docker compose exec booking-db psql -U postgres -d booking -c "SELECT * FROM bookings;"
+docker compose exec flight-db psql -U postgres -d flight -c "SELECT * FROM seat_reservations;"
+```
+
+Остановка с очисткой состояния:
+
+```bash
+make down
+```
