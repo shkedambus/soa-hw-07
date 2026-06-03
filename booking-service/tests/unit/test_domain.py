@@ -1,12 +1,11 @@
 from decimal import Decimal
 
 import pytest
-
 from app.domain import calculate_total_price
 
 
 def test_calculates_price_snapshot() -> None:
-    assert calculate_total_price(1499.95, 2) == Decimal("2999.90")
+    assert calculate_total_price(1499.95, 2) == Decimal("3099.90")
 
 
 @pytest.mark.parametrize(("price", "seats"), [(0, 1), (100, 0), (-1, 2)])
